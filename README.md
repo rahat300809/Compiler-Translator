@@ -1,125 +1,132 @@
-# Compiler Translator — AI Error Explainer
+# 🤖 Compiler Translator — AI Error Explainer for VS Code
 
-> **Understand your errors in plain English (or Bangla!) instantly.**  
-> Powered by **Groq AI** + **Firebase**. Supports ALL programming languages.
+[![Release](https://img.shields.io/badge/Release-v2.4.0-brightgreen.svg)](https://github.com/rahat300809/Compiler-Translator/releases)
+[![VS Code](https://img.shields.io/badge/VS%20Code-Extension-blue.svg?logo=visual-studio-code)](https://code.visualstudio.com/)
+[![Groq AI](https://img.shields.io/badge/Groq%20AI-Fastest%20Inference-orange.svg)](https://groq.com)
+[![Firebase](https://img.shields.io/badge/Firebase-Firestore%20Logging-amber.svg?logo=firebase)](https://firebase.google.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
 
-[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code-Extension-blue?logo=visual-studio-code)](https://marketplace.visualstudio.com)
-[![Firebase](https://img.shields.io/badge/Firebase-Firestore-orange?logo=firebase)](https://firebase.google.com)
-[![Groq AI](https://img.shields.io/badge/Groq-AI-green)](https://groq.com)
+> **Auto-detects errors in ANY terminal or run output and instantly explains them in plain human language (English, Bangla, etc.) using Groq AI.**  
+> Zero configuration needed — works automatically in every folder and project.
+
+---
+
+## 📥 Latest Release (v2.4.0)
+
+👉 **[Download compiler-translator-2.4.0.vsix](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-2.4.0.vsix)**  
+*(Click the link to download the ready-to-install extension package)*
+
+---
+
+## ⚡ Quick Start (Install on Any PC in 1 Minute)
+
+### Option 1: Install via VS Code GUI (Easiest)
+1. Download **[`compiler-translator-2.4.0.vsix`](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-2.4.0.vsix)**.
+2. Open **VS Code**.
+3. Open the **Extensions** view (`Ctrl + Shift + X`).
+4. Click the **`...` (Views and More Actions)** menu at the top-right of the Extensions side bar.
+5. Select **"Install from VSIX..."**.
+6. Choose the downloaded `compiler-translator-2.4.0.vsix` file.
+7. Reload VS Code (`Ctrl + Shift + P` → `Developer: Reload Window`). **Done!**
+
+### Option 2: Install via Terminal / PowerShell
+```bash
+code --install-extension compiler-translator-2.4.0.vsix
+```
+
+---
+
+## 🚀 How to Use
+
+```
+┌─────────────────┐       ┌────────────────────────┐       ┌─────────────────────────────┐
+│  Run Your Code  │  ──>  │  Click "Explain Output"│  ──>  │  AI Explains Error & Fix   │
+│  (In Terminal)  │       │  or press Ctrl+Shift+E │       │  (Or shows "✅ Code OK!")   │
+└─────────────────┘       └────────────────────────┘       └─────────────────────────────┘
+```
+
+1. **Run your code** normally in any VS Code terminal (e.g. `python script.py`, `javac Main.java`, `npm run dev`, etc.).
+2. When the compiler or runtime prints an output:
+   - Click the **`🤖 Explain Output`** button on the bottom status bar.
+   - *OR* Click the **`🤖` robot icon** on the top-right of the terminal title bar.
+   - *OR* Press **`Ctrl + Shift + E`** (Mac: `Cmd + Shift + E`).
+   - *OR* Right-click anywhere inside the terminal and select **"🤖 Explain Terminal Output"**.
+3. **What happens next:**
+   - ❌ **If an error is found:** Groq AI analyzes the compiler/runtime output and displays a human-friendly explanation with the exact fix in the **Compiler Translator** Output panel.
+   - ✅ **If no error is found:** The status bar updates to **`✅ Code OK!`** indicating your program ran cleanly.
 
 ---
 
 ## ✨ Features
 
-| Feature | Description |
-|---------|-------------|
-| 🔍 **Auto Error Detection** | Watches your terminal in real-time |
-| 🤖 **AI Explanation** | Groq LLaMA explains errors in plain language |
-| 🌍 **Multi-Language** | Supports 6 human languages (Bangla, English, etc.) |
-| 🔄 **3 API Keys** | Round-robin key rotation — no rate limits! |
-| 🔥 **Firebase Logging** | Error sessions saved online for history |
-| 💻 **All Languages** | Python, JS, TS, Java, C++, C#, Rust, Go, PHP, Ruby, Kotlin + more |
+- **Zero Setup & Folder Independent:** Once installed, it works across every project, workspace, and folder on your computer.
+- **Pure Terminal Error Intelligence:** Understands compiler messages directly from your terminal output without messing with your local file system.
+- **Built-in Groq AI Keys (No Setup Required):** Comes with 3 pre-configured Groq API keys rotated automatically in round-robin fashion with rate-limit protection.
+- **Fastest AI Inference:** Powered by Groq's high-speed inference engine (`openai/gpt-oss-120b` and LLaMA models).
+- **Multi-Language Explanations:** Get explanations in **English**, **Bangla (বাংলা)**, Spanish, French, Hindi, or Arabic.
+- **Online Error Logging:** Error sessions can be logged to Firebase Firestore for tracking your debugging history.
+- **Supports All Programming Languages:**
+  - 🐍 Python (`Traceback`, `SyntaxError`, `NameError`, etc.)
+  - ☕ Java (`javac` errors, runtime exceptions)
+  - 🌐 JavaScript & TypeScript (`Node.js`, `tsc` compiler errors)
+  - ⚙️ C & C++ (`gcc`, `g++`, `clang`, linker errors)
+  - 🔷 C# & .NET (`csc`, runtime exceptions)
+  - 🦀 Rust (`cargo`, `rustc` compiler errors)
+  - 🐹 Go (`go run`, panic stack traces)
+  - 🐘 PHP & 💎 Ruby & 📱 Kotlin & more!
 
 ---
 
-## 🚀 How It Works
+## ⌨️ Shortcuts & UI Controls
 
-```
-Your Code → Terminal Output → Error Detected → Groq AI → Human Explanation
-                                                    ↓
-                                            Firebase (saved online)
-```
-
-1. Run your code normally in any terminal
-2. Extension detects errors automatically
-3. Groq AI explains what went wrong in simple words
-4. Explanation appears in **"Compiler Translator" output panel**
-5. Session logged to Firebase for history
+| Action | Control / Shortcut | Location |
+|---|---|---|
+| **Explain Output** | `Ctrl + Shift + E` (`Cmd + Shift + E` on macOS) | Global Keyboard Shortcut |
+| **Status Bar Button** | `🤖 Explain Output` | Bottom-left Status Bar |
+| **Terminal Title Button**| `$(robot)` Icon | Terminal panel top-right |
+| **Context Menu** | Right-click → *🤖 Explain Terminal Output* | Inside active Terminal |
+| **Configure Settings** | `Ctrl + Shift + P` → *Compiler Translator: Configure* | Command Palette |
+| **Clear Buffer** | `Ctrl + Shift + P` → *Compiler Translator: Clear Buffer* | Command Palette |
 
 ---
 
-## ⌨️ Keyboard Shortcuts
+## ⚙️ Configuration & Settings
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Shift+E` | Explain last error manually |
-
----
-
-## 📋 Commands
-
-Open Command Palette (`Ctrl+Shift+P`) and search:
-
-- `Compiler Translator: Explain Last Error`
-- `Compiler Translator: Toggle Auto-Explain`  
-- `Compiler Translator: Show Error History`
-- `Compiler Translator: Clear Error History`
-- `Compiler Translator: Configure API Keys`
-
----
-
-## ⚙️ Settings
+Go to **Settings** (`Ctrl + ,`) and search for `Compiler Translator`:
 
 | Setting | Default | Description |
-|---------|---------|-------------|
-| `compilerTranslator.autoExplain` | `true` | Auto-explain on error detection |
-| `compilerTranslator.groqModel` | `llama-3.3-70b-versatile` | AI model to use |
-| `compilerTranslator.language` | `English` | Explanation language |
-| `compilerTranslator.enableFirebase` | `true` | Log sessions to Firebase |
-| `compilerTranslator.groqApiKeys` | `[]` | Your own Groq API keys |
+|---|---|---|
+| `compilerTranslator.language` | `English` | Language for AI explanations (`English`, `Bangla`, `Spanish`, etc.) |
+| `compilerTranslator.groqModel` | `openai/gpt-oss-120b` | Groq AI model to use (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, etc.) |
+| `compilerTranslator.groqApiKeys` | `[]` | Add your personal Groq API keys (optional — 3 built-in keys included) |
+| `compilerTranslator.enableFirebase`| `true` | Log error sessions to Firebase Firestore |
 
 ---
 
-## 🔥 Firebase Setup
+## 🛠️ Building & Packaging from Source
 
-The extension uses Firebase project `compiler-85122`. Error sessions are stored in **Firestore** under the `errorSessions` collection.
-
----
-
-## 🛠️ Development
+If you want to contribute or build the extension from source:
 
 ```bash
-# Clone
+# 1. Clone repository
 git clone https://github.com/rahat300809/Compiler-Translator.git
 cd Compiler-Translator
 
-# Install dependencies
+# 2. Install dependencies
 npm install
 
-# Build
+# 3. Compile TypeScript
 npm run compile
 
-# Package as .vsix
+# 4. Package as .vsix
 npm run package
 
-# Install locally
-code --install-extension compiler-translator-1.0.0.vsix
+# 5. Install the created .vsix into VS Code
+code --install-extension compiler-translator-2.4.0.vsix --force
 ```
 
 ---
 
-## 📦 Supported Languages
+## 📄 License
 
-| Language | Error Types |
-|----------|-------------|
-| Python | SyntaxError, TypeError, ImportError, etc. |
-| JavaScript | ReferenceError, TypeError, UnhandledPromise |
-| TypeScript | TS compiler errors (TS2345, etc.) |
-| Java | NullPointerException, ClassCastException |
-| C/C++ | Compiler errors, linker errors, Segfault |
-| C# | CS errors, runtime exceptions |
-| Rust | Borrow checker, type errors |
-| Go | Compile errors, panics |
-| PHP | Parse errors, fatal errors |
-| Ruby | NameError, NoMethodError |
-| Kotlin | Compiler errors |
-
----
-
-## 🤝 Author
-
-**rahat300809** — [GitHub](https://github.com/rahat300809)
-
----
-
-*Built with ❤️ using Groq AI + Firebase + VS Code Extension API*
+This project is licensed under the [MIT License](LICENSE.txt).
