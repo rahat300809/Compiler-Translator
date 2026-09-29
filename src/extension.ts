@@ -212,10 +212,15 @@ async function cmdExplain(): Promise<void> {
     ch.appendLine('');
     ch.appendLine(`⏳ [${new Date().toLocaleTimeString()}] Analyzing ${lang} error with Groq AI…`);
 
-    // Try finding source code context
+    // Read source code from workspace folder / open editor
     let codeCtx = '';
-    if (err?.file && err?.line) {
-      codeCtx = extractCodeContext(err.file, err.line);
+    try {
+      codeCtx = await findAndReadCode(err?.file, err?.line);
+      if (codeCtx) {
+        ch.appendLine(`📂 Code context loaded from folder (${err?.file ?? 'active editor'})`);
+      }
+    } catch (e) {
+      console.warn('[CT] Code reading warning:', e);
     }
 
     const { explainError } = await import('./groqClient');
@@ -346,6 +351,67 @@ function getProblemsDiagnostics(): string {
   } catch {
     return '';
   }
+}
+
+// ─── Folder & Workspace Code Reader ───────────────────────────────────────────
+async function findAndReadCode(fileName?: string, errorLine?: number): Promise<string> {
+  try {
+    const activeEditor = vscode.window.activeTextEditor;
+    const baseName = fileName ? fileName.replace(/^[\\/]/, '').split(/[\\/]/).pop()?.toLowerCase() : undefined;
+
+    // 1. Check active editor if it matches or if no filename was specified
+    if (activeEditor) {
+      const activeDoc = activeEditor.document;
+      if (!baseName || activeDoc.fileName.toLowerCase().endsWith(baseName)) {
+        return formatCodeSnippet(activeDoc.getText(), errorLine);
+      }
+    }
+
+    // 2. Search all open tabs in VS Code
+    if (baseName) {
+      for (const doc of vscode.workspace.textDocuments) {
+        if (doc.fileName.toLowerCase().endsWith(baseName)) {
+          return formatCodeSnippet(doc.getText(), errorLine);
+        }
+      }
+
+      // 3. Search in workspace folders
+      const uris = await vscode.workspace.findFiles(`**/${baseName}`, '**/node_modules/**', 2);
+      if (uris.length > 0) {
+        const data = await vscode.workspace.fs.readFile(uris[0]);
+        const text = Buffer.from(data).toString('utf-8');
+        return formatCodeSnippet(text, errorLine);
+      }
+    }
+
+    // 4. Fallback to active editor if any file is open
+    if (activeEditor) {
+      return formatCodeSnippet(activeEditor.document.getText(), errorLine);
+    }
+  } catch (err) {
+    console.warn('[CT] Failed to read code from folder:', err);
+  }
+  return '';
+}
+
+function formatCodeSnippet(fullText: string, errorLine?: number): string {
+  const lines = fullText.split(/\r?\n/);
+  if (lines.length <= 120) {
+    return lines
+      .map((l, i) => `${String(i + 1).padStart(4, ' ')}${errorLine && i + 1 === errorLine ? ' ❌ ' : ' │ '}${l}`)
+      .join('\n');
+  }
+
+  const target = errorLine ?? 1;
+  const start = Math.max(0, target - 15);
+  const end = Math.min(lines.length, target + 15);
+  return lines
+    .slice(start, end)
+    .map((l, i) => {
+      const num = start + i + 1;
+      return `${String(num).padStart(4, ' ')}${num === errorLine ? ' ❌ ' : ' │ '}${l}`;
+    })
+    .join('\n');
 }
 
 // ─── Quick error check ────────────────────────────────────────────────────────

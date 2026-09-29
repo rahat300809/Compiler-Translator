@@ -2,7 +2,7 @@
   "name": "compiler-translator",
   "displayName": "Compiler Translator — AI Error Explainer",
   "description": "Auto-detects errors in ANY terminal/run output and instantly explains them in plain language using Groq AI. Zero config — works in every folder automatically.",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "publisher": "rahat300809",
   "icon": "assets/icon.png",
   "engines": {
@@ -55,12 +55,13 @@
         },
         "compilerTranslator.groqModel": {
           "type": "string",
-          "default": "llama-3.3-70b-versatile",
+          "default": "openai/gpt-oss-120b",
           "enum": [
+            "openai/gpt-oss-120b",
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
             "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "mixtral-8x7b-32768",
-            "gemma2-9b-it"
+            "llama-3.1-8b-instant"
           ],
           "description": "Groq AI model to use"
         },
