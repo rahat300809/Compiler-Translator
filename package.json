@@ -2,7 +2,7 @@
   "name": "compiler-translator",
   "displayName": "Compiler Translator — AI Error Explainer",
   "description": "Auto-detects errors in ANY terminal/run output and instantly explains them in plain language using Groq AI. Zero config — works in every folder automatically.",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "publisher": "rahat300809",
   "icon": "assets/icon.png",
   "engines": {
@@ -20,6 +20,7 @@
       {
         "command": "compilerTranslator.explainTerminal",
         "title": "🤖 Explain Terminal Output",
+        "icon": "$(robot)",
         "category": "Compiler Translator"
       },
       {
@@ -93,6 +94,12 @@
         {
           "command": "compilerTranslator.explainTerminal",
           "group": "z_compilerTranslator"
+        }
+      ],
+      "terminal/title/run": [
+        {
+          "command": "compilerTranslator.explainTerminal",
+          "group": "navigation"
         }
       ]
     }
