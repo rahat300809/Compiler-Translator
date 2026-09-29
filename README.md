@@ -16,6 +16,18 @@
 👉 **[Download compiler-translator-2.4.0.vsix](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-2.4.0.vsix)**  
 *(Click the link to download the ready-to-install extension package)*
 
+### 📦 All Releases & Download Links
+
+| Version | Status | Highlights | Direct Download |
+|---|---|---|---|
+| **v2.4.0** | 🌟 **Latest** | Pure terminal error analysis, instant Groq AI explanation, Code OK verification | [Download v2.4.0](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-2.4.0.vsix) |
+| **v2.3.0** | Stable | Verified active Groq models support with smart cascade fallback | [Download v2.3.0](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-2.3.0.vsix) |
+| **v2.2.0** | Stable | Direct terminal screen grab & terminal title bar button | [Download v2.2.0](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-2.2.0.vsix) |
+| **v2.1.0** | Stable | Commands-first architecture with non-blocking activation | [Download v2.1.0](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-2.1.0.vsix) |
+| **v2.0.0** | Legacy | Interactive "🤖 Explain Output" status bar flow | [Download v2.0.0](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-2.0.0.vsix) |
+| **v1.1.0** | Legacy | Global automated workspace error detector | [Download v1.1.0](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-1.1.0.vsix) |
+| **v1.0.0** | Legacy | Initial release with Groq rotation & Firebase | [Download v1.0.0](https://github.com/rahat300809/Compiler-Translator/raw/main/releases/compiler-translator-1.0.0.vsix) |
+
 ---
 
 ## ⚡ Quick Start (Install on Any PC in 1 Minute)
