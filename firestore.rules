@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /errorSessions/{sessionId} {
+      // Anyone can write error sessions (extension users)
+      allow create: if request.resource.data.keys().hasAll([
+        'language', 'errorType', 'errorMessage', 'aiExplanation', 'model'
+      ]);
+      // Only allow reads (for history feature)
+      allow read: if true;
+      // No updates or deletes from client
+      allow update, delete: if false;
+    }
+  }
+}

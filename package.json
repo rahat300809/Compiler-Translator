@@ -1,0 +1,150 @@
+{
+  "name": "compiler-translator",
+  "displayName": "Compiler Translator — AI Error Explainer",
+  "description": "Traces terminal/compiler output and explains errors in plain human language using Groq AI. Supports all languages.",
+  "version": "1.0.0",
+  "publisher": "rahat300809",
+  "icon": "assets/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Debuggers",
+    "Linters"
+  ],
+  "keywords": [
+    "error explainer",
+    "ai",
+    "groq",
+    "compiler",
+    "terminal",
+    "debug",
+    "python",
+    "javascript",
+    "c++",
+    "java"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "compilerTranslator.explainLast",
+        "title": "🤖 Explain Last Error",
+        "category": "Compiler Translator"
+      },
+      {
+        "command": "compilerTranslator.toggleAutoExplain",
+        "title": "🔄 Toggle Auto-Explain",
+        "category": "Compiler Translator"
+      },
+      {
+        "command": "compilerTranslator.clearHistory",
+        "title": "🗑️ Clear Error History",
+        "category": "Compiler Translator"
+      },
+      {
+        "command": "compilerTranslator.showHistory",
+        "title": "📋 Show Error History",
+        "category": "Compiler Translator"
+      },
+      {
+        "command": "compilerTranslator.configure",
+        "title": "⚙️ Configure API Keys",
+        "category": "Compiler Translator"
+      }
+    ],
+    "configuration": {
+      "title": "Compiler Translator",
+      "properties": {
+        "compilerTranslator.autoExplain": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically explain errors when detected in terminal output"
+        },
+        "compilerTranslator.groqApiKeys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "List of Groq API keys (rotated automatically)"
+        },
+        "compilerTranslator.groqModel": {
+          "type": "string",
+          "default": "llama-3.3-70b-versatile",
+          "enum": [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it"
+          ],
+          "description": "Groq model to use for explanations"
+        },
+        "compilerTranslator.enableFirebase": {
+          "type": "boolean",
+          "default": true,
+          "description": "Log error sessions to Firebase for analysis"
+        },
+        "compilerTranslator.showInTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show AI explanation directly in a terminal panel"
+        },
+        "compilerTranslator.maxContextLines": {
+          "type": "number",
+          "default": 50,
+          "description": "Max lines of terminal output to capture for context"
+        },
+        "compilerTranslator.language": {
+          "type": "string",
+          "default": "English",
+          "enum": ["English", "Bangla", "Spanish", "French", "Hindi", "Arabic"],
+          "description": "Language for AI explanations"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "compilerTranslator.explainLast",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e"
+      }
+    ],
+    "menus": {
+      "terminal/context": [
+        {
+          "command": "compilerTranslator.explainLast",
+          "group": "compilerTranslator"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npx vsce package",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {
+    "firebase": "^10.7.0",
+    "groq-sdk": "^0.3.3",
+    "node-fetch": "^3.3.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rahat300809/Compiler-Translator.git"
+  },
+  "license": "MIT"
+}
