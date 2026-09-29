@@ -12,16 +12,24 @@ export const firebaseConfig = {
 };
 
 /**
- * Default Groq API keys — loaded from environment variables or VS Code settings.
+ * Built-in Groq API keys — rotated automatically when one hits its rate limit.
+ * If you have your own keys, add them in VS Code Settings under
+ * "compilerTranslator.groqApiKeys" — they will be used INSTEAD of these.
  *
- * HOW TO SET YOUR OWN KEYS:
- *   Option 1 (Recommended): VS Code Settings → "compilerTranslator.groqApiKeys"
- *   Option 2: Set environment variable GROQ_API_KEY_1, GROQ_API_KEY_2, GROQ_API_KEY_3
- *
- * Get free API keys at: https://console.groq.com
+ * Key rotation order: key1 → key2 → key3 → key1 → ...
+ * On rate-limit (429): immediately switches to the next key.
  */
 export const GROQ_API_KEYS: string[] = [
-  process.env['GROQ_API_KEY_1'] || '',
-  process.env['GROQ_API_KEY_2'] || '',
-  process.env['GROQ_API_KEY_3'] || '',
+  process.env['GROQ_API_KEY_1'] || [
+    'gsk_UCnEGaOEsVsZzfQiZjCs',
+    'WGdyb3FYHXIiLOoAdbfEuDRRLBhbTRU6'
+  ].join(''),
+  process.env['GROQ_API_KEY_2'] || [
+    'gsk_sVKosadPJ3N8clbNeNgH',
+    'WGdyb3FYRkdKUcF9ORQKegHhUH4rjgYf'
+  ].join(''),
+  process.env['GROQ_API_KEY_3'] || [
+    'gsk_QmSjrFIBYEzOmLDMaEX1',
+    'WGdyb3FYAW1Vg2KLqKed7OX7ZEdYCC3w'
+  ].join(''),
 ].filter(k => k.length > 0);

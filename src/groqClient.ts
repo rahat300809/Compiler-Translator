@@ -1,6 +1,12 @@
 /**
- * Groq AI client with automatic API key rotation.
- * Uses 3 keys in round-robin; falls back to next key on rate-limit errors.
+ * Groq AI client with smart API key rotation.
+ *
+ * Strategy:
+ *  - 3 built-in keys rotated in round-robin order
+ *  - On HTTP 429 (rate limit): mark key as "cooling down" for 60s
+ *  - Skip cooling-down keys automatically
+ *  - Try ALL available keys before giving up
+ *  - Shows VS Code status info when switching keys
  */
 
 import * as vscode from 'vscode';
@@ -19,13 +25,62 @@ interface GroqResponse {
   choices: GroqChoice[];
 }
 
-let currentKeyIndex = 0;
+// ─── Key rotation state ───────────────────────────────────────────────────────
 
-function getNextKey(): string {
+const KEY_COOLDOWN_MS = 60_000; // 60 seconds cooldown after rate limit
+const keyCooldowns = new Map<number, number>(); // keyIndex → cooldown end timestamp
+let lastUsedKeyIndex = 0;
+
+function getActiveKeys(): string[] {
   const config = vscode.workspace.getConfiguration('compilerTranslator');
   const userKeys: string[] = config.get('groqApiKeys') || [];
-  const keys = userKeys.length > 0 ? userKeys : GROQ_API_KEYS;
-  
+  return userKeys.length > 0 ? userKeys : GROQ_API_KEYS;
+}
+
+/**
+ * Returns the next available key index, skipping ones in cooldown.
+ * Tries all keys before returning -1 (all exhausted).
+ */
+function getAvailableKeyIndex(keys: string[]): number {
+  const now = Date.now();
+  const total = keys.length;
+
+  for (let offset = 1; offset <= total; offset++) {
+    const idx = (lastUsedKeyIndex + offset) % total;
+    const cooldownEnd = keyCooldowns.get(idx) || 0;
+
+    if (now >= cooldownEnd) {
+      return idx; // this key is available
+    }
+  }
+
+  // All keys cooling down — find the one that recovers soonest
+  let soonestIdx = 0;
+  let soonestEnd = Infinity;
+  for (let i = 0; i < total; i++) {
+    const end = keyCooldowns.get(i) || 0;
+    if (end < soonestEnd) {
+      soonestEnd = end;
+      soonestIdx = i;
+    }
+  }
+
+  return soonestIdx; // use whoever recovers first (might still fail, caller handles it)
+}
+
+function markKeyCoolingDown(keyIndex: number): void {
+  keyCooldowns.set(keyIndex, Date.now() + KEY_COOLDOWN_MS);
+  console.warn(`[Compiler Translator] Key #${keyIndex + 1} rate-limited — cooling down for 60s`);
+}
+
+// ─── Core API caller ──────────────────────────────────────────────────────────
+
+async function callGroqAPI(
+  messages: GroqMessage[],
+  model: string
+): Promise<string> {
+  const keys = getActiveKeys();
+
   if (keys.length === 0) {
     vscode.window.showErrorMessage(
       '🔑 Compiler Translator: No Groq API keys configured.',
@@ -38,31 +93,26 @@ function getNextKey(): string {
         vscode.env.openExternal(vscode.Uri.parse('https://console.groq.com'));
       }
     });
-    throw new Error('No Groq API keys configured. Click "Add Keys Now" in the notification.');
+    throw new Error('No Groq API keys configured.');
   }
 
-  const key = keys[currentKeyIndex % keys.length];
-  currentKeyIndex = (currentKeyIndex + 1) % keys.length;
-  return key;
-}
-
-async function callGroqAPI(
-  messages: GroqMessage[],
-  model: string,
-  retries: number = 3
-): Promise<string> {
   let lastError: Error | null = null;
-  
-  const config = vscode.workspace.getConfiguration('compilerTranslator');
-  const userKeys: string[] = config.get('groqApiKeys') || [];
-  const keys = userKeys.length > 0 ? userKeys : GROQ_API_KEYS;
-  const maxAttempts = Math.min(retries, keys.length);
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const apiKey = getNextKey();
-    
+  // Try every key (up to keys.length attempts)
+  for (let attempt = 0; attempt < keys.length; attempt++) {
+    const keyIndex = getAvailableKeyIndex(keys);
+    lastUsedKeyIndex = keyIndex;
+    const apiKey = keys[keyIndex];
+
+    if (attempt > 0) {
+      // Notify user we switched keys
+      vscode.window.setStatusBarMessage(
+        `🔄 Compiler Translator: Switching to API key #${keyIndex + 1}...`,
+        3000
+      );
+    }
+
     try {
-      // Use dynamic import for node-fetch compatibility
       const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -80,29 +130,51 @@ async function callGroqAPI(
 
       if (!response.ok) {
         const errorBody = await response.text();
+
         if (response.status === 429) {
-          // Rate limited — try next key
-          console.warn(`[Compiler Translator] Key ${attempt + 1} rate limited, trying next...`);
-          lastError = new Error(`Rate limited: ${errorBody}`);
-          continue;
+          // Rate limited — cool down this key and try the next one
+          markKeyCoolingDown(keyIndex);
+          lastError = new Error(`Key #${keyIndex + 1} rate limited`);
+          continue; // try next key
         }
-        throw new Error(`Groq API error ${response.status}: ${errorBody}`);
+
+        if (response.status === 401) {
+          throw new Error(`Key #${keyIndex + 1} is invalid or expired. Please update your API keys.`);
+        }
+
+        throw new Error(`Groq API error ${response.status}: ${errorBody.slice(0, 200)}`);
       }
 
       const data = await response.json() as GroqResponse;
-      return data.choices[0]?.message?.content || 'No explanation available.';
+      const content = data.choices[0]?.message?.content;
 
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Rate limited')) {
-        lastError = error;
-        continue;
+      if (!content) {
+        throw new Error('Groq returned an empty response.');
       }
-      throw error;
+
+      // Success — clear this key's cooldown if it had one
+      keyCooldowns.delete(keyIndex);
+      return content;
+
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('rate limited')) {
+        lastError = err;
+        continue; // already marked cooling, try next
+      }
+      throw err; // non-rate-limit errors bubble up immediately
     }
   }
 
-  throw lastError || new Error('All API keys exhausted or failed.');
+  // All keys exhausted
+  const cooldownSecs = Math.ceil(KEY_COOLDOWN_MS / 1000);
+  throw new Error(
+    `All ${keys.length} API keys are rate-limited. ` +
+    `They will recover in ~${cooldownSecs}s. ` +
+    `Add more keys via Settings → Compiler Translator → Groq Api Keys.`
+  );
 }
+
+
 
 export async function explainError(
   errorText: string,
