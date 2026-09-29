@@ -1,27 +1,43 @@
 /**
- * Firebase service for logging error sessions.
- * Stores error history online for analytics and cross-device access.
+ * Firebase service — fully safe, lazy-loaded.
+ * If Firebase fails for ANY reason, all functions return null/[]
+ * so the extension continues working without errors.
  */
 
-import { initializeApp, FirebaseApp } from 'firebase/app';
-import {
-  getFirestore,
-  Firestore,
-  collection,
-  addDoc,
-  serverTimestamp,
-  query,
-  orderBy,
-  limit,
-  getDocs,
-  Timestamp
-} from 'firebase/firestore';
 import { firebaseConfig } from './config';
-import type { DetectedError } from './errorDetector';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyFn = (...args: any[]) => any;
+
+let initialized = false;
+let fbModules: Record<string, AnyFn> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let db: any = null;
+
+async function ensureFirebase(): Promise<boolean> {
+  if (initialized) { return fbModules !== null; }
+  initialized = true;
+
+  try {
+    const { initializeApp }  = await import('firebase/app');
+    const firestore          = await import('firebase/firestore');
+
+    const app = initializeApp(firebaseConfig);
+    db = firestore.getFirestore(app);
+    fbModules = firestore as unknown as Record<string, AnyFn>;
+
+    console.log('[CT] Firebase initialized');
+    return true;
+  } catch (e) {
+    console.warn('[CT] Firebase not available (offline or config error):', (e as Error).message);
+    return false;
+  }
+}
 
 export interface ErrorSession {
   id?: string;
-  timestamp: Date | Timestamp;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  timestamp: any;
   language: string;
   errorType: string;
   errorMessage: string;
@@ -33,77 +49,48 @@ export interface ErrorSession {
   resolved?: boolean;
 }
 
-let app: FirebaseApp | null = null;
-let db: Firestore | null = null;
-let initialized = false;
-
-function ensureInitialized(): boolean {
-  if (initialized) { return true; }
-
-  try {
-    app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-    initialized = true;
-    console.log('[Compiler Translator] Firebase initialized successfully');
-    return true;
-  } catch (error) {
-    console.error('[Compiler Translator] Firebase initialization failed:', error);
-    return false;
-  }
-}
-
 export async function logErrorSession(
-  error: DetectedError,
+  error: { language: string; errorType: string; message: string; file?: string; line?: number },
   aiExplanation: string,
   workspaceFolder: string | undefined,
   model: string
 ): Promise<string | null> {
-  if (!ensureInitialized() || !db) { return null; }
+  const ok = await ensureFirebase();
+  if (!ok || !db || !fbModules) { return null; }
 
   try {
-    const session: Omit<ErrorSession, 'id'> = {
-      timestamp: serverTimestamp() as Timestamp,
+    const { collection, addDoc, serverTimestamp } = fbModules;
+    const docRef = await addDoc(collection(db, 'errorSessions'), {
+      timestamp: serverTimestamp(),
       language: error.language,
       errorType: error.errorType,
-      errorMessage: error.message.slice(0, 500),
+      errorMessage: (error.message || '').slice(0, 500),
       file: error.file,
       line: error.line,
       aiExplanation: aiExplanation.slice(0, 2000),
       workspaceFolder: workspaceFolder?.replace(/\\/g, '/'),
       model,
       resolved: false
-    };
-
-    const docRef = await addDoc(collection(db, 'errorSessions'), session);
-    console.log(`[Compiler Translator] Logged error session: ${docRef.id}`);
-    return docRef.id;
-  } catch (error) {
-    console.error('[Compiler Translator] Failed to log to Firebase:', error);
+    });
+    return docRef.id as string;
+  } catch (e) {
+    console.warn('[CT] Firebase log failed:', (e as Error).message);
     return null;
   }
 }
 
-export async function getRecentSessions(limitCount: number = 10): Promise<ErrorSession[]> {
-  if (!ensureInitialized() || !db) { return []; }
+export async function getRecentSessions(limitCount = 10): Promise<ErrorSession[]> {
+  const ok = await ensureFirebase();
+  if (!ok || !db || !fbModules) { return []; }
 
   try {
-    const q = query(
-      collection(db, 'errorSessions'),
-      orderBy('timestamp', 'desc'),
-      limit(limitCount)
-    );
-
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as ErrorSession));
-  } catch (error) {
-    console.error('[Compiler Translator] Failed to fetch sessions:', error);
+    const { collection, query, orderBy, limit, getDocs } = fbModules;
+    const q   = query(collection(db, 'errorSessions'), orderBy('timestamp', 'desc'), limit(limitCount));
+    const snap = await getDocs(q);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return snap.docs.map((d: any) => ({ id: d.id, ...d.data() })) as ErrorSession[];
+  } catch (e) {
+    console.warn('[CT] Firebase fetch failed:', (e as Error).message);
     return [];
   }
-}
-
-export function isFirebaseEnabled(): boolean {
-  return initialized;
 }
