@@ -1,36 +1,28 @@
 {
   "name": "compiler-translator",
   "displayName": "Compiler Translator — AI Error Explainer",
-  "description": "Traces terminal/compiler output and explains errors in plain human language using Groq AI. Supports all languages.",
-  "version": "1.0.0",
+  "description": "Auto-detects errors in ANY terminal/run output and instantly explains them in plain language using Groq AI. Zero config — works in every folder automatically.",
+  "version": "1.1.0",
   "publisher": "rahat300809",
   "icon": "assets/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": [
-    "Other",
-    "Debuggers",
-    "Linters"
-  ],
+  "categories": ["Other", "Debuggers", "Linters"],
   "keywords": [
-    "error explainer",
-    "ai",
-    "groq",
-    "compiler",
-    "terminal",
-    "debug",
-    "python",
-    "javascript",
-    "c++",
-    "java"
+    "error explainer", "ai", "groq", "compiler", "terminal",
+    "debug", "python", "javascript", "c++", "java", "auto"
   ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
+  "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "compilerTranslator.runAndExplain",
+        "title": "▶ Run & Explain",
+        "category": "Compiler Translator",
+        "icon": "$(play)"
+      },
       {
         "command": "compilerTranslator.explainLast",
         "title": "🤖 Explain Last Error",
@@ -53,7 +45,7 @@
       },
       {
         "command": "compilerTranslator.configure",
-        "title": "⚙️ Configure API Keys",
+        "title": "⚙️ Configure",
         "category": "Compiler Translator"
       }
     ],
@@ -63,13 +55,18 @@
         "compilerTranslator.autoExplain": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically explain errors when detected in terminal output"
+          "description": "Automatically explain errors when detected — works in ALL folders with zero setup"
+        },
+        "compilerTranslator.autoRunOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run and check the file every time you save it"
         },
         "compilerTranslator.groqApiKeys": {
           "type": "array",
           "items": { "type": "string" },
           "default": [],
-          "description": "List of Groq API keys (rotated automatically)"
+          "description": "Your own Groq API keys (optional — 3 built-in keys already included)"
         },
         "compilerTranslator.groqModel": {
           "type": "string",
@@ -80,32 +77,33 @@
             "mixtral-8x7b-32768",
             "gemma2-9b-it"
           ],
-          "description": "Groq model to use for explanations"
+          "description": "Groq AI model to use"
         },
         "compilerTranslator.enableFirebase": {
           "type": "boolean",
           "default": true,
-          "description": "Log error sessions to Firebase for analysis"
-        },
-        "compilerTranslator.showInTerminal": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show AI explanation directly in a terminal panel"
-        },
-        "compilerTranslator.maxContextLines": {
-          "type": "number",
-          "default": 50,
-          "description": "Max lines of terminal output to capture for context"
+          "description": "Log error sessions to Firebase"
         },
         "compilerTranslator.language": {
           "type": "string",
           "default": "English",
           "enum": ["English", "Bangla", "Spanish", "French", "Hindi", "Arabic"],
           "description": "Language for AI explanations"
+        },
+        "compilerTranslator.terminalCaptureDelay": {
+          "type": "number",
+          "default": 800,
+          "description": "Milliseconds to wait after terminal output settles before analyzing (lower = faster but may miss multi-line errors)"
         }
       }
     },
     "keybindings": [
+      {
+        "command": "compilerTranslator.runAndExplain",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorFocus"
+      },
       {
         "command": "compilerTranslator.explainLast",
         "key": "ctrl+shift+e",
@@ -113,6 +111,23 @@
       }
     ],
     "menus": {
+      "editor/title/run": [
+        {
+          "command": "compilerTranslator.runAndExplain",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "compilerTranslator.runAndExplain",
+          "group": "1_run@1",
+          "when": "resourceExtname =~ /\\.(py|js|ts|java|c|cpp|cs|go|rs|php|rb|kt|r|sh|dart|lua)$/"
+        },
+        {
+          "command": "compilerTranslator.explainLast",
+          "group": "1_run@2"
+        }
+      ],
       "terminal/context": [
         {
           "command": "compilerTranslator.explainLast",
@@ -125,7 +140,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npx vsce package",
+    "package": "npx @vscode/vsce package --no-dependencies",
     "lint": "eslint src --ext ts"
   },
   "devDependencies": {

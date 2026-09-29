@@ -1,14 +1,20 @@
 /**
- * Compiler Translator — Main Extension Entry Point
+ * Compiler Translator v1.1.0 — Main Extension Entry Point
  *
- * Activates terminal watching, error detection, Groq AI explanation,
- * and Firebase logging when the extension loads in VS Code.
+ * FULLY AUTOMATIC — install once, works in EVERY folder:
+ *   • Watches ALL terminal output for errors (no setup per project)
+ *   • Hooks into VS Code task completion events
+ *   • Optional: auto-run on file save
+ *   • Right-click any code file → "▶ Run & Explain"
+ *   • Ctrl+Shift+R to run current file + get AI explanation
  *
  * Author: rahat300809
  * Repo: https://github.com/rahat300809/Compiler-Translator
  */
 
 import * as vscode from 'vscode';
+import * as cp     from 'child_process';
+import * as path   from 'path';
 import { TerminalWatcher, detectLanguageFromEditor } from './terminalWatcher';
 import { detectErrors, extractCodeContext, DetectedError } from './errorDetector';
 import { explainError } from './groqClient';
@@ -20,347 +26,462 @@ import {
   disposeOutputs
 } from './outputPanel';
 
+// ─── Run command map ──────────────────────────────────────────────────────────
+
+const RUNNERS: Record<string, (f: string, d: string) => string> = {
+  python:     f => `python "${f}"`,
+  javascript: f => `node "${f}"`,
+  typescript: f => `npx ts-node "${f}"`,
+  java: (f, d) => `javac "${f}" && java -cp "${d}" "${path.basename(f, '.java')}"`,
+  c:    (f, d) => {
+    const out = path.join(d, '_ct_out');
+    return `gcc "${f}" -o "${out}" && "${out}"`;
+  },
+  cpp:  (f, d) => {
+    const out = path.join(d, '_ct_out');
+    return `g++ "${f}" -o "${out}" && "${out}"`;
+  },
+  csharp:     f => `dotnet script "${f}"`,
+  go:         f => `go run "${f}"`,
+  rust: (f, d) => {
+    const out = path.join(d, '_ct_out');
+    return `rustc "${f}" -o "${out}" && "${out}"`;
+  },
+  php:   f => `php "${f}"`,
+  ruby:  f => `ruby "${f}"`,
+  kotlin: f => `kotlinc "${f}" -include-runtime -d _ct_out.jar && java -jar _ct_out.jar`,
+  r:     f => `Rscript "${f}"`,
+  bash:  f => `bash "${f}"`,
+  powershell: f => `pwsh -File "${f}"`,
+  perl:  f => `perl "${f}"`,
+  lua:   f => `lua "${f}"`,
+  swift: f => `swift "${f}"`,
+  dart:  f => `dart "${f}"`,
+};
+
+const LANG_LABEL: Record<string, string> = {
+  python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript',
+  java: 'Java', c: 'C', cpp: 'C++', csharp: 'C#', go: 'Go', rust: 'Rust',
+  php: 'PHP', ruby: 'Ruby', kotlin: 'Kotlin', r: 'R', bash: 'Bash',
+  powershell: 'PowerShell', perl: 'Perl', lua: 'Lua', swift: 'Swift', dart: 'Dart',
+};
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let terminalWatcher: TerminalWatcher | null = null;
-let statusBarItem: vscode.StatusBarItem;
-let lastDetectedErrors: DetectedError[] = [];
-let lastRawOutput: string = '';
-let isProcessing = false;
+let watcher: TerminalWatcher | null = null;
+let barRun: vscode.StatusBarItem;
+let barState: vscode.StatusBarItem;
+let lastErrors: DetectedError[] = [];
+let lastOutput = '';
+let busy = false;
 
-// ─── Activation ───────────────────────────────────────────────────────────────
+// ─── Activate ────────────────────────────────────────────────────────────────
 
-export function activate(context: vscode.ExtensionContext): void {
-  console.log('[Compiler Translator] Extension activated!');
+export function activate(ctx: vscode.ExtensionContext): void {
+  console.log('[CT] Compiler Translator activated');
 
-  // Create status bar item
-  statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100
+  // ── Status bar: RUN button ─────────────────────────────────────────────────
+  barRun = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1000);
+  barRun.text    = '$(play) Run & Explain';
+  barRun.tooltip = 'Run current file — errors explained by AI  (Ctrl+Shift+R)';
+  barRun.command = 'compilerTranslator.runAndExplain';
+  barRun.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+  barRun.show();
+  ctx.subscriptions.push(barRun);
+
+  // ── Status bar: state indicator ────────────────────────────────────────────
+  barState = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 1000);
+  barState.command = 'compilerTranslator.explainLast';
+  setState('idle');
+  barState.show();
+  ctx.subscriptions.push(barState);
+
+  // ── Terminal watcher ───────────────────────────────────────────────────────
+  watcher = new TerminalWatcher(onErrorsFound);
+  watcher.start();
+  ctx.subscriptions.push({ dispose: () => watcher?.dispose() });
+
+  // ── Auto-run on file save ──────────────────────────────────────────────────
+  ctx.subscriptions.push(
+    vscode.workspace.onDidSaveTextDocument(doc => {
+      const cfg = vscode.workspace.getConfiguration('compilerTranslator');
+      if (!cfg.get<boolean>('autoRunOnSave')) { return; }
+      if (RUNNERS[doc.languageId]) {
+        vscode.commands.executeCommand('compilerTranslator.runAndExplain');
+      }
+    })
   );
-  statusBarItem.command = 'compilerTranslator.explainLast';
-  setStatusBar('idle');
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
 
-  // Initialize terminal watcher
-  terminalWatcher = new TerminalWatcher(handleErrorsDetected);
-  terminalWatcher.start();
-  context.subscriptions.push({ dispose: () => terminalWatcher?.dispose() });
-
-  // Register commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand('compilerTranslator.explainLast', cmdExplainLast),
-    vscode.commands.registerCommand('compilerTranslator.toggleAutoExplain', cmdToggleAutoExplain),
-    vscode.commands.registerCommand('compilerTranslator.clearHistory', cmdClearHistory),
-    vscode.commands.registerCommand('compilerTranslator.showHistory', cmdShowHistory),
-    vscode.commands.registerCommand('compilerTranslator.configure', cmdConfigure)
+  // ── Show/hide run button based on active editor ───────────────────────────
+  ctx.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+      if (editor && RUNNERS[editor.document.languageId]) {
+        barRun.show();
+      } else {
+        barRun.hide();
+      }
+    })
   );
 
-  // Output channel
-  context.subscriptions.push({ dispose: () => disposeOutputs() });
+  // ── Commands ───────────────────────────────────────────────────────────────
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand('compilerTranslator.runAndExplain',    cmdRun),
+    vscode.commands.registerCommand('compilerTranslator.explainLast',      cmdExplainLast),
+    vscode.commands.registerCommand('compilerTranslator.toggleAutoExplain', cmdToggle),
+    vscode.commands.registerCommand('compilerTranslator.clearHistory',     cmdClear),
+    vscode.commands.registerCommand('compilerTranslator.showHistory',      cmdHistory),
+    vscode.commands.registerCommand('compilerTranslator.configure',        cmdConfigure)
+  );
 
-  // Welcome message
-  const channel = getOrCreateOutputChannel();
-  channel.appendLine('═══════════════════════════════════════════════════════════');
-  channel.appendLine('  🤖 Compiler Translator — AI Error Explainer v1.0.0');
-  channel.appendLine('  Powered by Groq AI + Firebase');
-  channel.appendLine('  Watching terminal for errors... (all languages supported)');
-  channel.appendLine('  Press Ctrl+Shift+E to explain the last error manually.');
-  channel.appendLine('═══════════════════════════════════════════════════════════');
-  channel.appendLine('');
+  ctx.subscriptions.push({ dispose: () => disposeOutputs() });
 
-  vscode.window.showInformationMessage(
-    '🤖 Compiler Translator is active! Watching your terminal for errors.',
-    'Open Panel'
-  ).then(selection => {
-    if (selection === 'Open Panel') {
-      channel.show();
+  // ── Welcome ────────────────────────────────────────────────────────────────
+  const ch = getOrCreateOutputChannel();
+  ch.appendLine('══════════════════════════════════════════════════════════════');
+  ch.appendLine('  🤖 Compiler Translator v1.1  —  AI Error Explainer');
+  ch.appendLine('  Watching ALL terminals automatically across every folder.');
+  ch.appendLine('');
+  ch.appendLine('  ▶  Ctrl+Shift+R   →  Run current file + AI explains errors');
+  ch.appendLine('  ▶  Ctrl+Shift+E   →  Re-explain last error');
+  ch.appendLine('  ▶  Right-click code file  →  "Run & Explain"');
+  ch.appendLine('  ▶  Any terminal error  →  AI auto-explains instantly');
+  ch.appendLine('══════════════════════════════════════════════════════════════');
+  ch.appendLine('');
+}
+
+// ─── Run & Explain command ────────────────────────────────────────────────────
+
+async function cmdRun(): Promise<void> {
+  if (busy) {
+    vscode.window.showInformationMessage('⏳ Already running, please wait…');
+    return;
+  }
+
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage('🤖 Open a code file first.');
+    return;
+  }
+
+  await editor.document.save();
+
+  const filePath = editor.document.fileName;
+  const fileDir  = path.dirname(filePath);
+  const langId   = editor.document.languageId;
+  const lang     = LANG_LABEL[langId] || langId;
+  const runFn    = RUNNERS[langId];
+
+  if (!runFn) {
+    vscode.window.showWarningMessage(
+      `🤖 "${lang}" can't be auto-run. Run it manually in the terminal — errors will still be detected automatically.`
+    );
+    return;
+  }
+
+  const cmd = runFn(filePath, fileDir);
+  busy = true;
+  setState('analyzing');
+
+  const ch = getOrCreateOutputChannel();
+  ch.show(false);
+  ch.appendLine('');
+  ch.appendLine(`▶ Running ${lang}: ${path.basename(filePath)}`);
+  ch.appendLine('─'.repeat(60));
+
+  // Also show real output in a run terminal
+  const runTerm = getRunTerminal();
+  runTerm.show(false);
+  runTerm.sendText(`echo "▶ Running: ${path.basename(filePath)}" && ${cmd}`, true);
+
+  // Capture output directly for AI analysis
+  cp.exec(cmd, { cwd: fileDir, timeout: 30_000, maxBuffer: 1_048_576 }, async (err, stdout, stderr) => {
+    try {
+      const exitCode = (err as any)?.code ?? (err ? 1 : 0);
+      const duration = '…';
+
+      // Show program output in channel
+      if (stdout.trim()) {
+        ch.appendLine('📤 Output:');
+        ch.appendLine(stdout.trim());
+        ch.appendLine('');
+      }
+
+      const errorText = stderr.trim() || (exitCode !== 0 ? stdout.trim() : '');
+
+      // ── Success ──────────────────────────────────────────────────────────
+      if (!errorText && exitCode === 0) {
+        ch.appendLine(`✅ Finished OK (exit 0)`);
+        ch.appendLine('');
+        setState('idle');
+        vscode.window.setStatusBarMessage('✅ Ran successfully — no errors!', 5000);
+        busy = false;
+        return;
+      }
+
+      // ── Error detected ────────────────────────────────────────────────────
+      ch.appendLine('❌ Error detected:');
+      ch.appendLine(errorText.slice(0, 800));
+      ch.appendLine('');
+
+      const parsed = detectErrors(errorText);
+      if (parsed.length === 0) {
+        // Generic non-zero exit
+        parsed.push({
+          raw: errorText, language: lang,
+          errorType: `Exit ${exitCode}`,
+          message: errorText.split('\n')[0] || 'Program exited with error',
+          severity: 'error'
+        });
+      }
+
+      lastErrors = parsed;
+      lastOutput = errorText;
+
+      await explainAndLog(parsed, errorText, lang);
+
+    } finally {
+      busy = false;
     }
   });
 }
 
-// ─── Core Error Handler ───────────────────────────────────────────────────────
+// ─── Terminal watcher callback ────────────────────────────────────────────────
 
-async function handleErrorsDetected(
+async function onErrorsFound(
   errors: DetectedError[],
   rawOutput: string,
   _terminal: vscode.Terminal
 ): Promise<void> {
-  const config = vscode.workspace.getConfiguration('compilerTranslator');
-  const autoExplain: boolean = config.get('autoExplain') ?? true;
+  lastErrors = errors;
+  lastOutput = rawOutput;
 
-  // Store for manual re-explain
-  lastDetectedErrors = errors;
-  lastRawOutput = rawOutput;
+  const cfg = vscode.workspace.getConfiguration('compilerTranslator');
+  if (!cfg.get<boolean>('autoExplain', true)) { return; }
+  if (busy) { return; }
 
-  if (!autoExplain || isProcessing) { return; }
-
-  await processAndExplainErrors(errors, rawOutput);
+  busy = true;
+  try {
+    const lang = errors[0]?.language !== 'Unknown'
+      ? errors[0]?.language
+      : detectLanguageFromEditor();
+    await explainAndLog(errors, rawOutput, lang);
+  } finally {
+    busy = false;
+  }
 }
 
-async function processAndExplainErrors(
+// ─── Core: call Groq AI + write output + Firebase ────────────────────────────
+
+async function explainAndLog(
   errors: DetectedError[],
-  rawOutput: string
+  rawOutput: string,
+  language: string
 ): Promise<void> {
-  if (isProcessing) { return; }
-  isProcessing = true;
+  const cfg       = vscode.workspace.getConfiguration('compilerTranslator');
+  const outputLang = cfg.get<string>('language') ?? 'English';
+  const model      = cfg.get<string>('groqModel') ?? 'llama-3.3-70b-versatile';
+  const firebase   = cfg.get<boolean>('enableFirebase') ?? true;
 
-  const config = vscode.workspace.getConfiguration('compilerTranslator');
-  const enableFirebase: boolean = config.get('enableFirebase') ?? true;
-  const outputLang: string = config.get('language') ?? 'English';
-  const maxContextLines: number = config.get('maxContextLines') ?? 50;
-
-  setStatusBar('analyzing');
+  setState('explaining');
   showProcessingMessage();
 
-  // Process up to 3 errors at once
   const errorsToProcess = errors.slice(0, 3);
 
   for (const error of errorsToProcess) {
     try {
-      // Get language from editor or detected error
-      const editorLang = detectLanguageFromEditor();
-      const language = error.language !== 'Unknown' ? error.language : editorLang;
+      // Get file context around the error line
+      const editor   = vscode.window.activeTextEditor;
+      const filePath = error.file ?? editor?.document.fileName;
+      const ctx      = extractCodeContext(filePath, error.line, 5);
+      const ctxText  = ctx || rawOutput.split('\n').slice(-30).join('\n');
 
-      // Get code context from file if possible
-      const codeContext = extractCodeContext(error.file, error.line, maxContextLines / 10);
+      const explanation = await explainError(error.raw, ctxText, language, outputLang);
 
-      // Build full context for AI
-      const contextLines = rawOutput.split('\n').slice(-maxContextLines).join('\n');
-      const errorContext = codeContext || contextLines;
-
-      setStatusBar('explaining');
-
-      // Call Groq AI
-      const explanation = await explainError(
-        error.raw,
-        errorContext,
-        language,
-        outputLang
-      );
-
-      // Write to Output Channel (main delivery method)
-      const model = config.get<string>('groqModel') || 'llama-3.3-70b-versatile';
       let sessionId: string | null = null;
-
-      // Log to Firebase
-      if (enableFirebase) {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        sessionId = await logErrorSession(error, explanation, workspaceFolder, model);
+      if (firebase) {
+        const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        sessionId = await logErrorSession(error, explanation, ws, model);
       }
 
       writeToOutputChannel(explanation, {
-        language,
-        errorType: error.errorType,
-        file: error.file,
-        line: error.line
+        language, errorType: error.errorType,
+        file: error.file, line: error.line
       }, sessionId);
 
-      // Show notification for fatal errors
-      if (error.severity === 'fatal') {
-        vscode.window.showWarningMessage(
-          `💥 Fatal error detected in ${language}. Check "Compiler Translator" output panel for explanation.`,
-          'View'
-        ).then(sel => {
-          if (sel === 'View') { getOrCreateOutputChannel().show(); }
-        });
-      }
-
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error('[Compiler Translator] Failed to explain error:', errorMsg);
-
-      const channel = getOrCreateOutputChannel();
-      channel.appendLine('');
-      channel.appendLine(`❌ Failed to get AI explanation: ${errorMsg}`);
-      channel.appendLine('   Check your internet connection and API keys in settings.');
-      channel.appendLine('');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      getOrCreateOutputChannel().appendLine(`❌ AI explanation failed: ${msg}`);
 
       vscode.window.showErrorMessage(
-        `Compiler Translator: ${errorMsg}`,
-        'Configure Keys'
-      ).then(sel => {
-        if (sel === 'Configure Keys') {
+        `Compiler Translator: ${msg}`, 'Configure'
+      ).then(s => {
+        if (s === 'Configure') {
           vscode.commands.executeCommand('compilerTranslator.configure');
         }
       });
     }
   }
 
-  setStatusBar(errors.length > 0 ? 'error' : 'idle');
-  isProcessing = false;
+  setState('error');
 }
 
-// ─── Commands ─────────────────────────────────────────────────────────────────
+// ─── Other commands ───────────────────────────────────────────────────────────
 
 async function cmdExplainLast(): Promise<void> {
-  if (lastDetectedErrors.length === 0) {
-    // Try to parse selected text or clipboard
-    const editor = vscode.window.activeTextEditor;
-    if (editor && !editor.selection.isEmpty) {
-      const selected = editor.document.getText(editor.selection);
-      const errors = detectErrors(selected);
-      if (errors.length > 0) {
-        lastDetectedErrors = errors;
-        lastRawOutput = selected;
-      } else {
-        vscode.window.showInformationMessage(
-          '🤖 No errors detected yet. Run your code and errors will be explained automatically!'
-        );
-        return;
-      }
-    } else {
-      vscode.window.showInformationMessage(
-        '🤖 No errors detected yet. Run your code and errors will be explained automatically!\n\nTip: You can also select error text and press Ctrl+Shift+E.'
-      );
-      return;
+  if (lastErrors.length === 0) {
+    // Check selected text
+    const sel = vscode.window.activeTextEditor?.selection;
+    const doc = vscode.window.activeTextEditor?.document;
+    if (sel && doc && !sel.isEmpty) {
+      const txt  = doc.getText(sel);
+      const errs = detectErrors(txt);
+      if (errs.length) { lastErrors = errs; lastOutput = txt; }
     }
   }
 
-  await processAndExplainErrors(lastDetectedErrors, lastRawOutput);
+  if (lastErrors.length === 0) {
+    vscode.window.showInformationMessage(
+      '🤖 No errors yet. Press Ctrl+Shift+R to run your file — errors will be explained automatically!'
+    );
+    return;
+  }
+
+  busy = true;
+  try {
+    const lang = lastErrors[0]?.language !== 'Unknown'
+      ? lastErrors[0]?.language : detectLanguageFromEditor();
+    await explainAndLog(lastErrors, lastOutput, lang);
+  } finally {
+    busy = false;
+  }
 }
 
-async function cmdToggleAutoExplain(): Promise<void> {
-  const config = vscode.workspace.getConfiguration('compilerTranslator');
-  const current = config.get<boolean>('autoExplain') ?? true;
-  await config.update('autoExplain', !current, vscode.ConfigurationTarget.Global);
-
-  const newState = !current;
-  terminalWatcher?.setEnabled(newState);
-  setStatusBar(newState ? 'idle' : 'disabled');
-
+async function cmdToggle(): Promise<void> {
+  const cfg = vscode.workspace.getConfiguration('compilerTranslator');
+  const cur = cfg.get<boolean>('autoExplain') ?? true;
+  await cfg.update('autoExplain', !cur, vscode.ConfigurationTarget.Global);
+  watcher?.setEnabled(!cur);
   vscode.window.showInformationMessage(
-    `🤖 Compiler Translator: Auto-explain ${newState ? 'ENABLED ✅' : 'DISABLED ❌'}`
+    `🤖 Auto-explain ${!cur ? 'ON ✅' : 'OFF ❌'}`
   );
 }
 
-async function cmdClearHistory(): Promise<void> {
-  lastDetectedErrors = [];
-  lastRawOutput = '';
-  const channel = getOrCreateOutputChannel();
-  channel.clear();
-  channel.appendLine('🗑️ Error history cleared.');
-  setStatusBar('idle');
-  vscode.window.showInformationMessage('🗑️ Compiler Translator: History cleared.');
+async function cmdClear(): Promise<void> {
+  lastErrors = []; lastOutput = '';
+  const ch = getOrCreateOutputChannel();
+  ch.clear();
+  ch.appendLine('🗑️ Cleared. Press Ctrl+Shift+R to run your file.');
+  setState('idle');
 }
 
-async function cmdShowHistory(): Promise<void> {
+async function cmdHistory(): Promise<void> {
   const { getRecentSessions } = await import('./firebaseService');
-
   vscode.window.withProgress(
-    {
-      location: vscode.ProgressLocation.Notification,
-      title: '🤖 Fetching error history from Firebase...',
-      cancellable: false
-    },
+    { location: vscode.ProgressLocation.Notification, title: '🤖 Loading history…', cancellable: false },
     async () => {
       const sessions = await getRecentSessions(10);
-
-      if (sessions.length === 0) {
-        vscode.window.showInformationMessage('No error history found in Firebase.');
+      if (!sessions.length) {
+        vscode.window.showInformationMessage('No Firebase history yet.');
         return;
       }
-
-      const channel = getOrCreateOutputChannel();
-      channel.show();
-      channel.appendLine('');
-      channel.appendLine('═══════════════════════════════════════════════════════════');
-      channel.appendLine('  📋 Recent Error History (from Firebase)');
-      channel.appendLine('═══════════════════════════════════════════════════════════');
-      channel.appendLine('');
-
-      for (const session of sessions) {
-        const ts = session.timestamp instanceof Date
-          ? session.timestamp.toLocaleString()
-          : 'Unknown time';
-
-        channel.appendLine(`🔴 [${ts}] ${session.language} — ${session.errorType}`);
-        channel.appendLine(`   ${session.errorMessage.slice(0, 100)}`);
-        channel.appendLine(`   AI: ${session.aiExplanation.slice(0, 150)}...`);
-        channel.appendLine('');
+      const ch = getOrCreateOutputChannel();
+      ch.show();
+      ch.appendLine('══════ 📋 Firebase Error History ══════');
+      for (const s of sessions) {
+        ch.appendLine(`🔴 ${s.language} — ${s.errorType}`);
+        ch.appendLine(`   ${s.errorMessage.slice(0, 100)}`);
+        ch.appendLine(`   AI: ${s.aiExplanation.slice(0, 150)}…`);
+        ch.appendLine('');
       }
     }
   );
 }
 
 async function cmdConfigure(): Promise<void> {
-  const action = await vscode.window.showQuickPick(
-    [
-      { label: '🔑 Set Custom Groq API Keys', detail: 'Add your own Groq API keys' },
-      { label: '🤖 Change AI Model', detail: 'Select which Groq model to use' },
-      { label: '🌍 Change Explanation Language', detail: 'Get explanations in your language' },
-      { label: '⚙️ Open Full Settings', detail: 'Open VS Code settings for this extension' },
-    ],
-    { placeHolder: 'Configure Compiler Translator' }
-  );
+  const pick = await vscode.window.showQuickPick([
+    { label: '🔑 Set Groq API Keys',         detail: 'Add your own keys (3 built-in already)' },
+    { label: '🤖 Change AI Model',            detail: 'LLaMA 3.3, Mixtral, Gemma2…' },
+    { label: '🌍 Change Explanation Language', detail: 'English, Bangla, Spanish…' },
+    { label: '💾 Toggle Auto-Run on Save',     detail: 'Auto-run file every time you save' },
+    { label: '⚙️ Open Full Settings',          detail: 'VS Code settings panel' },
+  ], { placeHolder: 'Compiler Translator — Configure' });
 
-  if (!action) { return; }
+  if (!pick) { return; }
 
-  if (action.label.includes('API Keys')) {
+  const cfg = vscode.workspace.getConfiguration('compilerTranslator');
+
+  if (pick.label.includes('API Keys')) {
     const keys = await vscode.window.showInputBox({
-      prompt: 'Enter Groq API keys separated by commas',
-      placeHolder: 'gsk_key1, gsk_key2, gsk_key3',
+      prompt: 'Groq API keys (comma-separated)',
+      placeHolder: 'gsk_key1, gsk_key2',
       password: true
     });
     if (keys) {
-      const keyList = keys.split(',').map(k => k.trim()).filter(Boolean);
-      await vscode.workspace.getConfiguration('compilerTranslator').update(
-        'groqApiKeys', keyList, vscode.ConfigurationTarget.Global
-      );
-      vscode.window.showInformationMessage(`✅ Saved ${keyList.length} API key(s).`);
+      const list = keys.split(',').map(k => k.trim()).filter(Boolean);
+      await cfg.update('groqApiKeys', list, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage(`✅ Saved ${list.length} keys.`);
     }
-  } else if (action.label.includes('Model')) {
-    const model = await vscode.window.showQuickPick(
+  } else if (pick.label.includes('Model')) {
+    const m = await vscode.window.showQuickPick(
       ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768', 'gemma2-9b-it'],
-      { placeHolder: 'Select Groq model' }
+      { placeHolder: 'Select model' }
     );
-    if (model) {
-      await vscode.workspace.getConfiguration('compilerTranslator').update(
-        'groqModel', model, vscode.ConfigurationTarget.Global
-      );
-      vscode.window.showInformationMessage(`✅ Model set to ${model}`);
+    if (m) {
+      await cfg.update('groqModel', m, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage(`✅ Model: ${m}`);
     }
-  } else if (action.label.includes('Language')) {
-    const lang = await vscode.window.showQuickPick(
+  } else if (pick.label.includes('Language')) {
+    const l = await vscode.window.showQuickPick(
       ['English', 'Bangla', 'Spanish', 'French', 'Hindi', 'Arabic'],
-      { placeHolder: 'Select explanation language' }
+      { placeHolder: 'Explanation language' }
     );
-    if (lang) {
-      await vscode.workspace.getConfiguration('compilerTranslator').update(
-        'language', lang, vscode.ConfigurationTarget.Global
-      );
-      vscode.window.showInformationMessage(`✅ Explanations will now be in ${lang}`);
+    if (l) {
+      await cfg.update('language', l, vscode.ConfigurationTarget.Global);
+      vscode.window.showInformationMessage(`✅ Language: ${l}`);
     }
-  } else {
-    vscode.commands.executeCommand(
-      'workbench.action.openSettings',
-      '@ext:rahat300809.compiler-translator'
+  } else if (pick.label.includes('Auto-Run')) {
+    const cur = cfg.get<boolean>('autoRunOnSave') ?? false;
+    await cfg.update('autoRunOnSave', !cur, vscode.ConfigurationTarget.Global);
+    vscode.window.showInformationMessage(
+      `💾 Auto-run on save: ${!cur ? 'ON ✅' : 'OFF ❌'}`
     );
+  } else {
+    vscode.commands.executeCommand('workbench.action.openSettings', '@ext:rahat300809.compiler-translator');
   }
 }
 
-// ─── Status Bar Helpers ───────────────────────────────────────────────────────
+// ─── Status bar ───────────────────────────────────────────────────────────────
 
-function setStatusBar(state: 'idle' | 'analyzing' | 'explaining' | 'error' | 'disabled'): void {
-  const states = {
-    idle: { text: '$(robot) CT: Ready', tooltip: 'Compiler Translator: Watching terminal', color: undefined },
-    analyzing: { text: '$(loading~spin) CT: Detecting...', tooltip: 'Analyzing terminal output', color: new vscode.ThemeColor('statusBarItem.warningBackground') },
-    explaining: { text: '$(loading~spin) CT: Asking AI...', tooltip: 'Getting AI explanation from Groq', color: new vscode.ThemeColor('statusBarItem.warningBackground') },
-    error: { text: '$(error) CT: Error Explained', tooltip: 'Error explained — click to see', color: new vscode.ThemeColor('statusBarItem.errorBackground') },
-    disabled: { text: '$(robot) CT: Disabled', tooltip: 'Auto-explain disabled. Click to explain manually.', color: undefined }
+function setState(s: 'idle' | 'analyzing' | 'explaining' | 'error'): void {
+  const M = {
+    idle:      { t: '$(robot) CT',                  tip: 'Compiler Translator — watching all terminals',    bg: undefined },
+    analyzing: { t: '$(loading~spin) CT: Running…', tip: 'Running your code…',                             bg: new vscode.ThemeColor('statusBarItem.warningBackground') },
+    explaining:{ t: '$(loading~spin) CT: AI…',      tip: 'Groq AI is explaining the error…',              bg: new vscode.ThemeColor('statusBarItem.warningBackground') },
+    error:     { t: '$(error) CT: See Output ↗',    tip: 'Error explained — click to open Output panel',  bg: new vscode.ThemeColor('statusBarItem.errorBackground') },
   };
-
-  const s = states[state];
-  statusBarItem.text = s.text;
-  statusBarItem.tooltip = s.tooltip;
-  statusBarItem.backgroundColor = s.color;
+  const m = M[s];
+  barState.text            = m.t;
+  barState.tooltip         = m.tip;
+  barState.backgroundColor = m.bg;
 }
 
-// ─── Deactivation ────────────────────────────────────────────────────────────
+// ─── Run terminal ────────────────────────────────────────────────────────────
+
+let runTerm: vscode.Terminal | null = null;
+function getRunTerminal(): vscode.Terminal {
+  const name = '▶ Run Output';
+  const ex   = vscode.window.terminals.find(t => t.name === name);
+  if (ex) { return runTerm = ex; }
+  return runTerm = vscode.window.createTerminal({
+    name, iconPath: new vscode.ThemeIcon('play'),
+    color: new vscode.ThemeColor('terminal.ansiGreen')
+  });
+}
+
+// ─── Deactivate ──────────────────────────────────────────────────────────────
 
 export function deactivate(): void {
-  terminalWatcher?.dispose();
+  watcher?.dispose();
   disposeOutputs();
-  console.log('[Compiler Translator] Extension deactivated.');
+  runTerm?.dispose();
 }

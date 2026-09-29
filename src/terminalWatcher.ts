@@ -1,213 +1,196 @@
 /**
- * Terminal Watcher — intercepts VS Code terminal output using the
- * Terminal Write Event API to detect errors in real-time.
+ * Terminal Watcher — captures output from ALL terminals automatically.
  *
- * VS Code's API doesn't allow reading terminal output directly,
- * so we use a TerminalDataWriteEvent listener (VS Code 1.93+) or
- * a PTY-based write interceptor as fallback.
+ * Uses TWO methods simultaneously for maximum reliability:
+ *   1. onDidWriteTerminalData — reads every character written to terminal
+ *   2. onDidEndTaskProcess   — fires when any VS Code task/run finishes
+ *
+ * Works in EVERY folder with ZERO configuration.
  */
 
 import * as vscode from 'vscode';
 import { detectErrors, hasErrors, extractCodeContext, DetectedError } from './errorDetector';
 
-interface BufferedTerminal {
+interface TerminalBuffer {
   terminal: vscode.Terminal;
   buffer: string;
   lastActivity: number;
 }
 
-const BUFFER_FLUSH_DELAY = 1500; // ms to wait after last output before processing
-const MAX_BUFFER_SIZE = 10000;   // chars
+const MAX_BUFFER = 15000;        // chars to keep per terminal
+let flushDelay  = 800;           // ms — read from config at runtime
 
-export type ErrorCallback = (errors: DetectedError[], rawOutput: string, terminal: vscode.Terminal) => Promise<void>;
+export type ErrorCallback = (
+  errors: DetectedError[],
+  rawOutput: string,
+  terminal: vscode.Terminal
+) => Promise<void>;
+
+// ─── TerminalWatcher class ────────────────────────────────────────────────────
 
 export class TerminalWatcher {
   private disposables: vscode.Disposable[] = [];
-  private terminalBuffers = new Map<number, BufferedTerminal>();
-  private flushTimers = new Map<number, NodeJS.Timeout>();
-  private onErrorDetected: ErrorCallback;
-  private enabled: boolean = true;
+  private buffers     = new Map<vscode.Terminal, TerminalBuffer>();
+  private timers      = new Map<vscode.Terminal, NodeJS.Timeout>();
+  private enabled     = true;
+  private callback: ErrorCallback;
 
-  // Track terminal IDs using a WeakMap-compatible approach
-  private terminalIds = new Map<vscode.Terminal, number>();
-  private nextId = 1;
-
-  constructor(onErrorDetected: ErrorCallback) {
-    this.onErrorDetected = onErrorDetected;
+  constructor(callback: ErrorCallback) {
+    this.callback = callback;
   }
 
   start(): void {
-    // Primary: VS Code Terminal data write event (v1.93+)
-    if ('onDidWriteTerminalData' in vscode.window) {
-      const watcher = (vscode.window as any).onDidWriteTerminalData(
-        (event: { terminal: vscode.Terminal; data: string }) => {
+    // ── Method 1: onDidWriteTerminalData ──────────────────────────────────────
+    // Available in VS Code 1.93+. Fires for EVERY character written to terminal.
+    const terminalDataApi = (vscode.window as any).onDidWriteTerminalData;
+    if (typeof terminalDataApi === 'function') {
+      this.disposables.push(
+        terminalDataApi((event: { terminal: vscode.Terminal; data: string }) => {
           if (this.enabled) {
-            this.handleTerminalData(event.terminal, event.data);
+            this.onData(event.terminal, event.data);
+          }
+        })
+      );
+      console.log('[CT] Terminal data capture: ACTIVE (onDidWriteTerminalData)');
+    } else {
+      console.warn('[CT] onDidWriteTerminalData not available — using task hooks only');
+    }
+
+    // ── Method 2: Task process end events ────────────────────────────────────
+    // Fires when ANY task (Run Build Task, Run Test Task, Code Runner, etc.) ends.
+    this.disposables.push(
+      vscode.tasks.onDidEndTaskProcess(e => {
+        if (!this.enabled) { return; }
+        const exitCode = e.exitCode ?? 0;
+        if (exitCode !== 0) {
+          // Task failed — trigger analysis on the most recently active terminal
+          const activeTerminal = vscode.window.activeTerminal;
+          if (activeTerminal) {
+            const buf = this.buffers.get(activeTerminal);
+            if (buf && buf.buffer.trim()) {
+              this.scheduleFlush(activeTerminal);
+            }
           }
         }
-      );
-      this.disposables.push(watcher);
-    }
-
-    // Track terminal open/close
-    this.disposables.push(
-      vscode.window.onDidOpenTerminal(terminal => {
-        const id = this.getTerminalId(terminal);
-        this.terminalBuffers.set(id, {
-          terminal,
-          buffer: '',
-          lastActivity: Date.now()
-        });
       })
     );
 
+    // ── Track terminal open/close ────────────────────────────────────────────
     this.disposables.push(
-      vscode.window.onDidCloseTerminal(terminal => {
-        const id = this.getTerminalId(terminal);
-        this.terminalBuffers.delete(id);
-        const timer = this.flushTimers.get(id);
-        if (timer) {
-          clearTimeout(timer);
-          this.flushTimers.delete(id);
-        }
-        this.terminalIds.delete(terminal);
+      vscode.window.onDidOpenTerminal(t => {
+        this.buffers.set(t, { terminal: t, buffer: '', lastActivity: Date.now() });
+      }),
+      vscode.window.onDidCloseTerminal(t => {
+        this.timers.get(t) && clearTimeout(this.timers.get(t)!);
+        this.timers.delete(t);
+        this.buffers.delete(t);
       })
     );
 
-    // Initialize existing terminals
-    vscode.window.terminals.forEach(terminal => {
-      const id = this.getTerminalId(terminal);
-      this.terminalBuffers.set(id, {
-        terminal,
-        buffer: '',
-        lastActivity: Date.now()
-      });
+    // Seed existing terminals
+    vscode.window.terminals.forEach(t => {
+      this.buffers.set(t, { terminal: t, buffer: '', lastActivity: Date.now() });
     });
+
+    console.log('[CT] Terminal watcher started — monitoring ALL terminals globally');
   }
 
-  setEnabled(enabled: boolean): void {
-    this.enabled = enabled;
-  }
+  private onData(terminal: vscode.Terminal, rawData: string): void {
+    // Skip our own output terminals
+    if (terminal.name.includes('AI Error Explainer') ||
+        terminal.name.includes('▶ Run Output')) { return; }
 
-  isEnabled(): boolean {
-    return this.enabled;
-  }
+    const text = stripAnsi(rawData);
+    if (!text.trim()) { return; }
 
-  private getTerminalId(terminal: vscode.Terminal): number {
-    if (!this.terminalIds.has(terminal)) {
-      this.terminalIds.set(terminal, this.nextId++);
-    }
-    return this.terminalIds.get(terminal)!;
-  }
-
-  private handleTerminalData(terminal: vscode.Terminal, data: string): void {
-    // Skip our own AI explanation terminal
-    if (terminal.name.includes('AI Error Explainer')) { return; }
-
-    const id = this.getTerminalId(terminal);
-    const stripped = stripAnsi(data);
-
-    // Get or create buffer entry
-    let entry = this.terminalBuffers.get(id);
-    if (!entry) {
-      entry = { terminal, buffer: '', lastActivity: Date.now() };
-      this.terminalBuffers.set(id, entry);
+    let buf = this.buffers.get(terminal);
+    if (!buf) {
+      buf = { terminal, buffer: '', lastActivity: Date.now() };
+      this.buffers.set(terminal, buf);
     }
 
-    entry.buffer += stripped;
-    entry.lastActivity = Date.now();
+    buf.buffer += text;
+    buf.lastActivity = Date.now();
 
-    // Trim buffer if too large
-    if (entry.buffer.length > MAX_BUFFER_SIZE) {
-      entry.buffer = entry.buffer.slice(-MAX_BUFFER_SIZE);
+    // Keep buffer from growing forever
+    if (buf.buffer.length > MAX_BUFFER) {
+      buf.buffer = buf.buffer.slice(-MAX_BUFFER);
     }
 
-    // Debounce: wait for output to settle before analyzing
-    const existingTimer = this.flushTimers.get(id);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-    }
-
-    const timer = setTimeout(() => {
-      this.flushBuffer(id);
-    }, BUFFER_FLUSH_DELAY);
-
-    this.flushTimers.set(id, timer);
+    // Cancel existing timer and restart
+    this.scheduleFlush(terminal);
   }
 
-  private async flushBuffer(terminalId: number): Promise<void> {
-    const entry = this.terminalBuffers.get(terminalId);
-    if (!entry || !entry.buffer.trim()) { return; }
+  private scheduleFlush(terminal: vscode.Terminal): void {
+    const existing = this.timers.get(terminal);
+    if (existing) { clearTimeout(existing); }
 
-    const bufferSnapshot = entry.buffer;
-    entry.buffer = ''; // reset buffer
+    // Read delay from config at call time
+    const config = vscode.workspace.getConfiguration('compilerTranslator');
+    flushDelay = config.get<number>('terminalCaptureDelay') ?? 800;
 
-    // Quick check before expensive parsing
-    if (!hasErrors(bufferSnapshot)) { return; }
+    const timer = setTimeout(() => this.flush(terminal), flushDelay);
+    this.timers.set(terminal, timer);
+  }
 
-    const errors = detectErrors(bufferSnapshot);
+  private async flush(terminal: vscode.Terminal): Promise<void> {
+    const buf = this.buffers.get(terminal);
+    if (!buf || !buf.buffer.trim()) { return; }
+
+    const snapshot = buf.buffer;
+    buf.buffer = ''; // reset
+
+    if (!hasErrors(snapshot)) { return; }
+
+    const errors = detectErrors(snapshot);
     if (errors.length === 0) { return; }
 
     try {
-      await this.onErrorDetected(errors, bufferSnapshot, entry.terminal);
+      await this.callback(errors, snapshot, terminal);
     } catch (err) {
-      console.error('[Compiler Translator] Error callback failed:', err);
+      console.error('[CT] Error callback threw:', err);
     }
   }
 
-  getLastOutput(terminal: vscode.Terminal): string {
-    const id = this.getTerminalId(terminal);
-    return this.terminalBuffers.get(id)?.buffer || '';
+  /** Force-flush the active terminal's buffer right now */
+  flushActive(): void {
+    const t = vscode.window.activeTerminal;
+    if (t) { this.flush(t); }
   }
+
+  setEnabled(v: boolean): void { this.enabled = v; }
+  isEnabled(): boolean { return this.enabled; }
 
   dispose(): void {
-    this.flushTimers.forEach(t => clearTimeout(t));
-    this.flushTimers.clear();
+    this.timers.forEach(t => clearTimeout(t));
     this.disposables.forEach(d => d.dispose());
-    this.disposables = [];
   }
 }
 
-/**
- * Strip ANSI escape codes from terminal output.
- * Required for clean error pattern matching.
- */
-function stripAnsi(text: string): string {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
-             .replace(/\x1b\][^\x07]*\x07/g, '')
-             .replace(/\x1b[=>]/g, '')
-             .replace(/\r/g, '\n');
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Strip ANSI escape codes so regex patterns match cleanly */
+function stripAnsi(s: string): string {
+  return s
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '')
+    .replace(/\x1b[=>]/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
 }
 
-/**
- * Detect language from active editor or file extension.
- */
+/** Detect language from active editor */
 export function detectLanguageFromEditor(): string {
   const editor = vscode.window.activeTextEditor;
   if (!editor) { return 'Unknown'; }
 
-  const langId = editor.document.languageId;
-  const langMap: Record<string, string> = {
-    python: 'Python',
-    javascript: 'JavaScript',
-    typescript: 'TypeScript',
-    java: 'Java',
-    cpp: 'C++',
-    c: 'C',
-    csharp: 'C#',
-    rust: 'Rust',
-    go: 'Go',
-    php: 'PHP',
-    ruby: 'Ruby',
-    kotlin: 'Kotlin',
-    swift: 'Swift',
-    dart: 'Dart',
-    r: 'R',
-    matlab: 'MATLAB',
-    bash: 'Bash',
-    powershell: 'PowerShell',
+  const map: Record<string, string> = {
+    python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript',
+    java: 'Java', cpp: 'C++', c: 'C', csharp: 'C#', rust: 'Rust',
+    go: 'Go', php: 'PHP', ruby: 'Ruby', kotlin: 'Kotlin', swift: 'Swift',
+    dart: 'Dart', r: 'R', bash: 'Bash', powershell: 'PowerShell',
   };
 
-  return langMap[langId] || langId || 'Unknown';
+  return map[editor.document.languageId] || editor.document.languageId || 'Unknown';
 }
