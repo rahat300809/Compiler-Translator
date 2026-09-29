@@ -2,7 +2,7 @@
   "name": "compiler-translator",
   "displayName": "Compiler Translator — AI Error Explainer",
   "description": "Auto-detects errors in ANY terminal/run output and instantly explains them in plain language using Groq AI. Zero config — works in every folder automatically.",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "publisher": "rahat300809",
   "icon": "assets/icon.png",
   "engines": {
@@ -18,34 +18,18 @@
   "contributes": {
     "commands": [
       {
-        "command": "compilerTranslator.runAndExplain",
-        "title": "▶ Run & Explain",
-        "category": "Compiler Translator",
-        "icon": "$(play)"
-      },
-      {
-        "command": "compilerTranslator.explainLast",
-        "title": "🤖 Explain Last Error",
-        "category": "Compiler Translator"
-      },
-      {
-        "command": "compilerTranslator.toggleAutoExplain",
-        "title": "🔄 Toggle Auto-Explain",
-        "category": "Compiler Translator"
-      },
-      {
-        "command": "compilerTranslator.clearHistory",
-        "title": "🗑️ Clear Error History",
-        "category": "Compiler Translator"
-      },
-      {
-        "command": "compilerTranslator.showHistory",
-        "title": "📋 Show Error History",
+        "command": "compilerTranslator.explainTerminal",
+        "title": "🤖 Explain Terminal Output",
         "category": "Compiler Translator"
       },
       {
         "command": "compilerTranslator.configure",
-        "title": "⚙️ Configure",
+        "title": "⚙️ Configure API Keys",
+        "category": "Compiler Translator"
+      },
+      {
+        "command": "compilerTranslator.clearHistory",
+        "title": "🗑️ Clear Buffer",
         "category": "Compiler Translator"
       }
     ],
@@ -99,39 +83,16 @@
     },
     "keybindings": [
       {
-        "command": "compilerTranslator.runAndExplain",
-        "key": "ctrl+shift+r",
-        "mac": "cmd+shift+r",
-        "when": "editorFocus"
-      },
-      {
-        "command": "compilerTranslator.explainLast",
+        "command": "compilerTranslator.explainTerminal",
         "key": "ctrl+shift+e",
         "mac": "cmd+shift+e"
       }
     ],
     "menus": {
-      "editor/title/run": [
-        {
-          "command": "compilerTranslator.runAndExplain",
-          "group": "navigation@1"
-        }
-      ],
-      "editor/context": [
-        {
-          "command": "compilerTranslator.runAndExplain",
-          "group": "1_run@1",
-          "when": "resourceExtname =~ /\\.(py|js|ts|java|c|cpp|cs|go|rs|php|rb|kt|r|sh|dart|lua)$/"
-        },
-        {
-          "command": "compilerTranslator.explainLast",
-          "group": "1_run@2"
-        }
-      ],
       "terminal/context": [
         {
-          "command": "compilerTranslator.explainLast",
-          "group": "compilerTranslator"
+          "command": "compilerTranslator.explainTerminal",
+          "group": "z_compilerTranslator"
         }
       ]
     }
