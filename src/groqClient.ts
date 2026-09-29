@@ -182,10 +182,9 @@ async function callGroqAPI(
   throw new Error('Failed to get explanation from Groq AI.');
 }
 
-// ─── Explain Error with source code context ───────────────────────────────────
+// ─── Explain Error based solely on the error message ──────────────────────────
 export async function explainError(
   errorText: string,
-  codeContext: string,
   language: string,
   outputLanguage: string = 'English'
 ): Promise<string> {
@@ -193,25 +192,24 @@ export async function explainError(
   const model: string = config.get('groqModel') || DEFAULT_MODEL;
 
   const systemPrompt = `You are an expert programming mentor inside VS Code.
-Your job is to explain compiler/runtime errors clearly and show how to fix them.
+Your job is to explain compiler and runtime error messages in simple, human-friendly terms directly based on the error output provided.
 
 Rules:
-1. Start with a ONE-LINE plain summary of what went wrong (no complicated jargon).
-2. Point out the exact line and mistake in the user's code.
-3. Show the EXACT CORRECTED CODE snippet.
-4. Explain WHY the fix works in simple, friendly terms.
-5. If there are multiple errors, explain each clearly.
-6. Write your explanation in ${outputLanguage}.
-7. Use emojis: ✅ for fix, ❌ for error line, 💡 for helpful tip.
-8. Keep response under 300 words.`;
+1. Explain what the error message means in plain, simple terms.
+2. Identify the mistake reported in the error message (including file, line number, or syntax issue mentioned).
+3. Provide the exact fix or corrected code example for this specific error.
+4. If multiple errors are shown in the message, explain each one clearly.
+5. Write your response in ${outputLanguage}.
+6. Use emojis: ❌ for the error, ✅ for the solution/corrected code, 💡 for tips.
+7. Keep the response concise, helpful, and under 250 words.`;
 
-  let userPrompt = `I got this error when running my ${language} code:\n\n\`\`\`\n${errorText}\n\`\`\``;
+  const userPrompt = `Here is the error message from my ${language} terminal output:
 
-  if (codeContext && codeContext.trim()) {
-    userPrompt += `\n\nHere is my source code:\n\`\`\`${language}\n${codeContext}\n\`\`\``;
-  }
+\`\`\`
+${errorText}
+\`\`\`
 
-  userPrompt += `\n\nPlease explain what went wrong and provide the exact fix.`;
+Please explain this error message and show how to fix it based on what is reported.`;
 
   const messages: GroqMessage[] = [
     { role: 'system', content: systemPrompt },
